@@ -1,1 +1,53 @@
-
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Poker Room</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#141f30;--muted:#9aa9bd;--green:#16a36a;--gold:#f2c66d}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#183b35,#0b1220 55%);font:16px system-ui;color:#f5f7fb;min-height:100vh}
+main{max-width:760px;margin:auto;padding:20px}.brand{display:flex;justify-content:space-between;align-items:center;margin:8px 0 20px}.brand h1{font-size:22px;margin:0}.pill{background:#183b30;color:#7ee0ad;border-radius:30px;padding:6px 10px;font-size:12px}
+.panel{background:#141f30;border:1px solid #2b3b50;border-radius:18px;padding:18px;margin:14px 0;box-shadow:0 12px 30px #0003}
+input,button,select{font:inherit;border-radius:12px;padding:12px;border:1px solid #3a4a60;background:#0e1725;color:white;width:100%;margin:5px 0}
+button{background:var(--green);border:0;font-weight:700;cursor:pointer}button.secondary{background:#26364b}button.warn{background:#9c3545}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.stat{background:#0d1725;padding:12px;border-radius:12px}.stat small{display:block;color:var(--muted)}.stat b{font-size:22px}
+.players{display:grid;grid-template-columns:1fr 1fr;gap:10px}.player{background:#0d1725;padding:14px;border-radius:14px;border:1px solid #2c3c50}.player.active{border-color:var(--gold)}.muted{color:var(--muted);font-size:13px}.hidden{display:none!important}.msg{color:var(--gold);line-height:1.45}.actions{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.actions button{margin:0}.roomcode{font-size:28px;letter-spacing:5px;color:var(--gold);font-weight:800}.error{color:#ff9da7;min-height:22px}
+@media(max-width:440px){main{padding:13px}.stats{grid-template-columns:repeat(3,1fr)}.stat b{font-size:18px}}
+</style></head><body><main>
+<div class="brand"><h1>♠ POKER ROOM</h1><span class="pill">PRIVATE PLAY · VIRTUAL CHIPS</span></div>
+<section id="lobby" class="panel"><h2>Join the table</h2><label class="muted">Your display name</label><input id="name" maxlength="18" placeholder="e.g. Player 1">
+<div class="row"><button id="create">Create room</button><button id="showJoin" class="secondary">Join room</button></div>
+<div id="joinBox" class="hidden"><input id="roomInput" maxlength="6" placeholder="6-character room code"><button id="join">Join table</button></div><div id="err" class="error"></div>
+<p class="muted">Two players · Texas Hold'em · 1,000 starting chips · blinds 5/10. Use physical cards; this app tracks betting.</p></section>
+<section id="table" class="hidden">
+<div class="panel"><div class="muted">ROOM CODE — share with your opponent</div><div class="roomcode" id="code">------</div><div class="stats">
+<div class="stat"><small>Pot</small><b id="pot">0</b></div><div class="stat"><small>Street</small><b id="street">Waiting</b></div><div class="stat"><small>Blinds</small><b>5 / 10</b></div></div></div>
+<div class="panel"><h3>Players</h3><div id="players" class="players"></div></div>
+<div class="panel"><div id="message" class="msg">Waiting for players…</div><p class="muted" id="turn"></p><div class="actions" id="actions">
+<button data-action="check">Check</button><button data-action="call">Call</button><button data-action="fold" class="warn">Fold</button><button id="raiseBtn" class="secondary">Raise</button></div>
+<div id="raiseBox" class="hidden"><label class="muted">Raise to (total bet on this street)</label><input id="raiseTo" type="number" min="20" step="5" value="20"><button id="confirmRaise">Confirm raise</button></div>
+<div id="showdown" class="hidden"><p>Reveal physical cards and agree on the winner.</p><div class="row"><button id="win0">Player 1 wins</button><button id="win1">Player 2 wins</button></div><p class="muted">Only the room creator can award the pot.</p></div>
+<button id="start" class="hidden">Start next hand</button></div>
+</section></main>
+<script src="/socket.io/socket.io.js"></script><script>
+const socket=io();let myCode=null,mySeat=null,isHost=false,state=null;
+const $=id=>document.getElementById(id), err=m=>$("err").textContent=m||"";
+function callEvent(event,data={}){return new Promise(resolve=>socket.emit(event,data,r=>{if(r&&!r.ok)err(r.error);else err("");resolve(r)}))}
+$("showJoin").onclick=()=>$("joinBox").classList.toggle("hidden");
+$("create").onclick=async()=>{const r=await callEvent("create",{name:$("name").value.trim()||"Player 1"});if(r?.ok){myCode=r.code;mySeat=0;isHost=true;enter()}};
+$("join").onclick=async()=>{const r=await callEvent("join",{code:$("roomInput").value,name:$("name").value.trim()||"Player 2"});if(r?.ok){myCode=r.code;mySeat=1;isHost=false;enter()}};
+function enter(){$("lobby").classList.add("hidden");$("table").classList.remove("hidden");$("code").textContent=myCode}
+socket.on("state",s=>{state=s;render()});
+function render(){if(!state)return;$("pot").textContent=state.pot;$("street").textContent=state.street.toUpperCase();$("message").textContent=state.message;
+$("players").innerHTML=state.players.map((p,i)=>`<div class="player ${state.turn===i&&state.status==="playing"?"active":""}"><b>${esc(p.name)} ${i===state.dealer?" · Dealer":""}</b><div style="font-size:24px;color:#7ee0ad">${p.chips} chips</div><div class="muted">${p.connected?"Connected":"Disconnected"}${state.contributions[i]?" · In this street: "+state.contributions[i]:""}</div></div>`).join("");
+const mine=state.turn===mySeat&&state.status==="playing";$("turn").textContent=state.status==="playing"?(mine?"YOUR TURN":"Waiting for opponent…"):"";
+$("actions").classList.toggle("hidden",!mine);$("raiseBox").classList.add("hidden");
+const owed=state.currentBet-state.contributions[mySeat];document.querySelector('[data-action="check"]').disabled=owed!==0;document.querySelector('[data-action="call"]').textContent=owed>0?"Call "+owed:"Call";
+$("start").classList.toggle("hidden",!(isHost&&(state.status==="waiting"||state.status==="complete")));
+$("showdown").classList.toggle("hidden",state.status!=="showdown");
+$("win0").textContent=(state.players[0]?.name||"Player 1")+" wins";$("win1").textContent=(state.players[1]?.name||"Player 2")+" wins";
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+document.querySelectorAll("[data-action]").forEach(b=>b.onclick=()=>callEvent("action",{action:b.dataset.action}));
+$("raiseBtn").onclick=()=>{$("raiseBox").classList.toggle("hidden");const min=state.currentBet===0?10:state.currentBet+10;$("raiseTo").min=min;$("raiseTo").value=min};
+$("confirmRaise").onclick=()=>callEvent("action",{action:"raise",raiseTo:$("raiseTo").value});
+$("start").onclick=()=>callEvent("startHand");
+$("win0").onclick=()=>callEvent("award",{winner:0});$("win1").onclick=()=>callEvent("award",{winner:1});
+</script></body></html>
